@@ -43,7 +43,7 @@ function DnaPage() {
     return { trait, value: Math.min(99, 20 + pref + done + liked) };
   });
   const newCats = new Set(s.completed.map((c) => c.category).filter((c) => !s.prefs!.interests.includes(c)));
-  const top = [...scores].sort((a, b) => b.value - a.value)[0];
+  const top = [...scores].sort((a, b) => b.value - a.value)[0] ?? { trait: "Curiosity", value: 0 };
 
   const stats = [
     { label: "Experiences discovered", value: s.completed.length, icon: Sparkles },
@@ -69,7 +69,7 @@ function DnaPage() {
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1fr]">
         <section className="glass rounded-3xl p-6 sm:p-8">
           <div className="space-y-5">
-            {scores.map((sc, i) => <ScoreBar key={sc.trait} label={sc.trait} value={sc.value} tone={TONES[i]} />)}
+            {scores.map((sc, i) => <ScoreBar key={sc.trait} label={sc.trait} value={sc.value} tone={TONES[i] ?? "nova"} />)}
           </div>
         </section>
         <section className="glass flex items-center justify-center rounded-3xl p-6">
