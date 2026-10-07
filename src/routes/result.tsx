@@ -14,7 +14,7 @@ type Search = { mode?: "demo" | "surprise" };
 
 export const Route = createFileRoute("/result")({
   validateSearch: (s: Record<string, unknown>): Search =>
-    s.mode === "demo" || s.mode === "surprise" ? { mode: s.mode } : {},
+    s["mode"] === "demo" || s["mode"] === "surprise" ? { mode: s["mode"] } : {},
   head: () => ({
     meta: [
       { title: "Your discovery — NOVA" },

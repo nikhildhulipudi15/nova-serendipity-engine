@@ -17,7 +17,7 @@ describe("serendipity engine", () => {
   });
 
   it("is deterministic", () => {
-    expect(recommend(DEMO_PREFS).ranked[0].exp.id).toBe(recommend(DEMO_PREFS).ranked[0].exp.id);
+    expect(recommend(DEMO_PREFS).ranked[0]?.exp.id).toBe(recommend(DEMO_PREFS).ranked[0]?.exp.id);
   });
 
   it("has at least 20 seeded experiences", () => {
