@@ -8,3 +8,6 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Recommendation engine is deterministic in src/lib/engine.ts (filter then weighted score); UI never lets AI choose picks — keeps results explainable and testable.
+- User state (prefs, saved, feedback, completions) lives in localStorage via src/lib/store.ts — no backend needed for the demo.
