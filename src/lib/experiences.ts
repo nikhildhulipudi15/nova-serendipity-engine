@@ -11,7 +11,8 @@ export interface Experience {
   category: Category;
   description: string;
   tags: Category[];
-  budget: number; // INR
+  cost_min: number; // INR, estimated
+  cost_max: number; // INR, estimated; 0 means genuinely free
   duration: number; // minutes
   energy: 1 | 2 | 3;
   social_mode: SocialMode[];
@@ -41,7 +42,9 @@ export const CATEGORY_META: Record<Category, { label: string; hue: number; icon:
 
 const img = (c: Category) => ({ hue: CATEGORY_META[c].hue, icon: CATEGORY_META[c].icon });
 
-export const EXPERIENCES: Experience[] = [
+type Raw = Omit<Experience, "cost_min" | "cost_max"> & { budget: number };
+
+const RAW: Raw[] = [
   {
     id: "night-sky-long-exposure", title: "Star-Trail Long Exposure Walk", category: "photography",
     description: "Find the darkest patch near you and capture the sky turning — with nothing but a phone, a stable surface and patience.",
@@ -234,6 +237,36 @@ export const EXPERIENCES: Experience[] = [
     location_type: "city", exploration: 0.8, image: img("art"),
     steps: ["Book a drop-in wheel session.", "Learn to centre the clay.", "Pull up your first wall.", "Shape a small bowl — wobbles welcome.", "Choose a glaze for firing."],
   },
+  {
+    id: "pantry-still-life", title: "Pantry Still-Life Food Photography", category: "food",
+    description: "Turn what's already in your kitchen into a moody still-life series using only window light.",
+    tags: ["food", "photography", "creative", "art"], budget: 0, duration: 45, energy: 1,
+    social_mode: ["solo", "friend"], moods: ["creative", "calm", "curious"], novelty_categories: ["food styling", "still-life lighting"],
+    location_type: "home", exploration: 0.85, image: img("food"),
+    steps: ["Pick three ingredients already in your kitchen.", "Find the softest window light in your home.", "Style them on a plain surface — try odd numbers.", "Shoot one frame lit only from the side.", "Choose your hero shot and title it like a painting."],
+  },
+  {
+    id: "pantry-remix", title: "Three-Ingredient Pantry Remix", category: "food",
+    description: "Cook something new using only three ingredients you already own — no shopping allowed.",
+    tags: ["food", "creative", "learning"], budget: 0, duration: 45, energy: 1,
+    social_mode: ["solo", "friend", "group"], moods: ["creative", "curious"], novelty_categories: ["improvised cooking"],
+    location_type: "home", exploration: 0.75, image: img("food"),
+    steps: ["Pull out three ingredients you rarely combine.", "Look up one technique you've never used on them.", "Cook a single small portion.", "Taste, adjust one thing, taste again.", "Name the dish and write its 3-line recipe."],
+  },
+  {
+    id: "urban-story-hunt", title: "Urban Story Hunt", category: "local",
+    description: "Read your streets like a book — faded signs, hand-painted shutters, repairs — and photograph a five-frame story.",
+    tags: ["local", "photography", "culture"], budget: 0, duration: 60, energy: 2,
+    social_mode: ["solo", "friend"], moods: ["curious", "reflective"], novelty_categories: ["urban storytelling", "visual narrative"],
+    location_type: "nearby", exploration: 0.9, image: img("local"),
+    steps: ["Walk out with one question: what changed here?", "Photograph three signs of age — paint, rust, repairs.", "Find one detail that contradicts the rest.", "Sequence five frames into a beginning, middle and end.", "Caption the story in one sentence."],
+  },
 ];
+
+export const EXPERIENCES: Experience[] = RAW.map(({ budget, ...r }) => ({
+  ...r,
+  cost_max: budget,
+  cost_min: budget === 0 ? 0 : Math.max(50, Math.round((budget * 0.6) / 50) * 50),
+}));
 
 export const getExperience = (id: string) => EXPERIENCES.find((e) => e.id === id);
