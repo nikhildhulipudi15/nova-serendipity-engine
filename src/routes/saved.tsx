@@ -3,6 +3,7 @@ import { Bookmark, Check, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState, ExperienceArt, Page } from "@/components/nova/ui";
 import { CATEGORY_META, getExperience } from "@/lib/experiences";
+import { costLabel } from "@/lib/engine";
 import { setState, useHydrated, useNova } from "@/lib/store";
 
 export const Route = createFileRoute("/saved")({
@@ -46,7 +47,7 @@ function Saved() {
                 <h2 className="mt-2 text-xl font-semibold">{e.title}</h2>
                 <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{e.description}</p>
                 <div className="mt-4 flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">{e.duration} min · {e.budget ? `₹${e.budget}` : "Free"}</span>
+                  <span className="text-xs text-muted-foreground">{e.duration} min · {costLabel(e)}</span>
                   <button onClick={() => remove(e.id)} className="btn-ghost !p-2" aria-label={`Remove ${e.title}`}><Trash2 className="size-4" /></button>
                 </div>
               </div>
