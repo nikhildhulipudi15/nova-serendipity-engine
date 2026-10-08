@@ -83,7 +83,7 @@ export function scoreExperience(e: Experience, p: Prefs, ctx: Context = {}): Sco
   const tagHits = e.tags.filter((t) => t !== e.category && interests.has(t));
   const affinity = e.tags.reduce((a, t) => a + (ctx.likedTags?.[t] ?? 0), 0);
 
-  const baseMatch = catHit ? 0.85 + 0.05 * Math.min(tagHits.length, 2) : 0.6 + 0.1 * Math.min(tagHits.length - 1, 2);
+  const baseMatch = catHit ? 0.82 + 0.04 * Math.min(tagHits.length, 2) : 0.75 + 0.08 * Math.min(tagHits.length - 1, 2);
   const match = clamp(baseMatch + clamp(affinity * 0.03, -0.15, 0.1));
 
   const familiar = !!ctx.familiar?.includes(e.category);
@@ -139,7 +139,7 @@ export function recommend(p: Prefs, ctx: Context = {}) {
   const pick = scored[0];
   // The "familiar" choice a conventional recommender would make: highest direct match.
   const familiar = pick
-    ? [...scored].filter((s) => s !== pick).sort((a, b) => b.match - a.match || a.novelty - b.novelty)[0] ?? null
+    ? [...scored].filter((s) => s !== pick && s.novelty < pick.novelty).sort((a, b) => b.match - a.match || a.novelty - b.novelty)[0] ?? null
     : null;
   return { ranked: scored, familiar, scanned: EXPERIENCES.length, passed: eligible.length, rankedCount: scored.length };
 }
