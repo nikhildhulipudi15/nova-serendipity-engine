@@ -4,23 +4,30 @@ export interface Prefs {
   interests: Category[];
   mood: Mood;
   time: number; // minutes available
-  budget: number; // INR max
+  budget: number; // INR max; 0 means strictly free
   energy: 1 | 2 | 3;
   social: SocialMode;
-  distance: LocationType;
+  distance: LocationType; // "nearby" = walkable, "city" = micro-commute, "far" = day trip
 }
 
 export interface Context {
   excluded?: string[];
   familiar?: Category[];
   completedCategories?: Category[];
+  /** Adaptive preference per trait; positive = liked, negative = rejected. */
   likedTags?: Partial<Record<Category, number>>;
+  /** Novelty preference raised by "Too familiar" / "Surprise me more". */
+  noveltyPressure?: number;
+  /** Novelty categories the user has already engaged with (saved/completed). */
+  seenNovelty?: string[];
   surprise?: boolean;
 }
 
 export const WEIGHTS = { match: 0.35, novelty: 0.25, feasibility: 0.2, mood: 0.1, exploration: 0.1 } as const;
 
-const DIST: Record<LocationType, number> = { home: 0, nearby: 1, city: 2, far: 3 };
+/** Distance reach: walkable covers home + nearby; commute adds city; day trip adds far. */
+export const DIST: Record<LocationType, number> = { home: 0, nearby: 0, city: 1, far: 2 };
+export const DISTANCE_LABEL: Record<LocationType, string> = { home: "walkable", nearby: "walkable", city: "micro-commute", far: "day-trip" };
 const clamp = (n: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));
 
 export interface Scored {
@@ -31,81 +38,121 @@ export interface Scored {
   mood: number;
   exploration: number;
   final: number;
+  rank: number;
   reasons: string[];
+  whyNew: string;
 }
 
 export function finalScore(s: { match: number; novelty: number; feasibility: number; mood: number; exploration: number }) {
   return s.match * WEIGHTS.match + s.novelty * WEIGHTS.novelty + s.feasibility * WEIGHTS.feasibility + s.mood * WEIGHTS.mood + s.exploration * WEIGHTS.exploration;
 }
 
-/** Step 1: hard filters. Relaxes distance, then social mode, if nothing survives. */
-export function filterExperiences(p: Prefs, ctx: Context = {}) {
-  const excluded = new Set(ctx.excluded ?? []);
-  const base = EXPERIENCES.filter((e) => !excluded.has(e.id) && e.budget <= p.budget && e.duration <= p.time * 1.25);
-  const strict = base.filter((e) => DIST[e.location_type] <= DIST[p.distance] && e.social_mode.includes(p.social));
-  if (strict.length) return { pool: strict, relaxed: null as string | null };
-  const noDist = base.filter((e) => e.social_mode.includes(p.social));
-  if (noDist.length) return { pool: noDist, relaxed: "distance" };
-  return { pool: base, relaxed: base.length ? "group size & distance" : null };
+/** Stage A: hard constraints. A candidate that violates any of these is never eligible. */
+export function passesConstraints(e: Experience, p: Prefs) {
+  return (
+    e.cost_max <= p.budget &&
+    e.duration <= p.time &&
+    DIST[e.location_type] <= DIST[p.distance] &&
+    e.social_mode.includes(p.social) &&
+    e.energy <= p.energy
+  );
 }
 
-/** Step 2: score every surviving experience. */
+/** Relevance: the candidate must share a meaningful bridge (category or tag) with selected interests. */
+export function bridgeTo(e: Experience, interests: Category[]): Category | null {
+  if (interests.includes(e.category)) return e.category;
+  return e.tags.find((t) => interests.includes(t)) ?? null;
+}
+
+export function filterExperiences(p: Prefs, ctx: Context = {}) {
+  const excluded = new Set(ctx.excluded ?? []);
+  const eligible = EXPERIENCES.filter((e) => !excluded.has(e.id) && passesConstraints(e, p));
+  const relevant = eligible.filter((e) => bridgeTo(e, p.interests));
+  return { eligible, pool: relevant };
+}
+
+export function costLabel(e: Experience) {
+  if (e.cost_max === 0) return "₹0";
+  return e.cost_min === e.cost_max ? `~₹${e.cost_max}` : `~₹${e.cost_min}–${e.cost_max}`;
+}
+
+/** Stage B: score an eligible experience. */
 export function scoreExperience(e: Experience, p: Prefs, ctx: Context = {}): Scored {
   const interests = new Set(p.interests);
   const catHit = interests.has(e.category);
   const tagHits = e.tags.filter((t) => t !== e.category && interests.has(t));
-  const liked = e.tags.reduce((a, t) => a + (ctx.likedTags?.[t] ?? 0), 0);
+  const affinity = e.tags.reduce((a, t) => a + (ctx.likedTags?.[t] ?? 0), 0);
 
-  let match = catHit ? 0.88 + 0.03 * tagHits.length : tagHits.length ? 0.68 + 0.1 * (tagHits.length - 1) : 0.3;
-  match = clamp(match + Math.min(0.12, liked * 0.03), 0, 0.99);
+  const baseMatch = catHit ? 0.85 + 0.05 * Math.min(tagHits.length, 2) : 0.6 + 0.1 * Math.min(tagHits.length - 1, 2);
+  const match = clamp(baseMatch + clamp(affinity * 0.03, -0.15, 0.1));
 
-  const familiar = ctx.familiar?.includes(e.category);
-  const done = ctx.completedCategories?.includes(e.category);
-  let novelty = (catHit ? 0.48 : 0.9) - (familiar ? 0.35 : 0) - (done ? 0.15 : 0) + 0.03 * e.novelty_categories.length;
-  novelty = clamp(novelty, 0.1, 0.99);
+  const familiar = !!ctx.familiar?.includes(e.category);
+  const done = !!ctx.completedCategories?.includes(e.category);
+  const freshTypes = e.novelty_categories.filter((n) => !ctx.seenNovelty?.includes(n)).length;
+  const novelty = clamp(
+    (catHit ? 0.4 : 0.7) + (freshTypes > 0 ? 0.1 + 0.05 * Math.min(freshTypes - 1, 1) : 0) - (familiar ? 0.3 : 0) - (done ? 0.15 : 0),
+  );
 
-  const timeFit = 1 - Math.max(0, e.duration - p.time) / p.time - (Math.max(0, p.time - e.duration) / p.time) * 0.15;
-  const budgetFit = e.budget === 0 ? 1 : 1 - 0.25 * (e.budget / Math.max(p.budget, 1));
-  const energyFit = 1 - Math.abs(e.energy - p.energy) * 0.25;
-  const distFit = DIST[e.location_type] <= DIST[p.distance] ? 1 : 0.6;
-  const feasibility = clamp(timeFit * 0.35 + budgetFit * 0.25 + energyFit * 0.25 + distFit * 0.15, 0.1, 0.99);
+  const timeUse = e.duration / p.time; // 0..1 because of hard filter
+  const timeFit = 0.6 + 0.4 * timeUse;
+  const budgetFit = p.budget === 0 ? 1 : 1 - 0.3 * (e.cost_max / p.budget);
+  const energyFit = 1 - (p.energy - e.energy) * 0.15;
+  const feasibility = clamp(timeFit * 0.4 + budgetFit * 0.3 + energyFit * 0.3);
 
-  const mood = e.moods.includes(p.mood) ? (e.moods[0] === p.mood ? 1 : 0.9) : 0.45;
-  const exploration = clamp(e.exploration * 0.8 + Math.min(e.novelty_categories.length, 3) * 0.07);
+  const mood = e.moods.includes(p.mood) ? (e.moods[0] === p.mood ? 1 : 0.85) : 0.4;
+  const exploration = clamp(e.exploration);
 
   const s = { match, novelty, feasibility, mood, exploration };
-  return { exp: e, ...s, final: finalScore(s), reasons: explain(e, p, { catHit, tagHits, familiar: !!familiar }) };
+  const final = finalScore(s);
+  const pressure = ctx.noveltyPressure ?? 0;
+  const rank = (ctx.surprise ? novelty * 0.6 + final * 0.4 : final) + pressure * 0.04 * novelty;
+  return { exp: e, ...s, final, rank, reasons: explain(e, p, ctx, catHit, tagHits), whyNew: whyNew(e, p) };
 }
 
-/** Deterministic explanations — always available, no AI required. */
-export function explain(e: Experience, p: Prefs, f: { catHit: boolean; tagHits: Category[]; familiar: boolean }) {
+/** Deterministic reasons — each one is backed by input or recorded state. */
+export function explain(e: Experience, p: Prefs, ctx: Context, catHit: boolean, tagHits: Category[]) {
   const r: string[] = [];
-  const hit = f.catHit ? e.category : f.tagHits[0];
-  if (hit) r.push(`Connects to your ${CATEGORY_META[hit].label.toLowerCase()} interest`);
+  const hit = catHit ? e.category : tagHits[0];
+  if (hit) r.push(`Matches your ${CATEGORY_META[hit].label.toLowerCase()} interest`);
   r.push(`Fits your ${p.time >= 240 ? "half-day" : `${p.time}-minute`} window (${e.duration} min)`);
-  r.push(e.budget === 0 ? "Completely free" : `Within your budget at about ₹${e.budget}`);
-  if (!f.catHit && !f.familiar) r.push(`A category you haven't explored: ${CATEGORY_META[e.category].label}`);
-  if (e.moods.includes(p.mood)) r.push(`Matches your ${p.mood} mood`);
-  r.push(`Introduces ${e.novelty_categories.join(" & ")}`);
+  r.push(e.cost_max === 0 ? "Costs ₹0 — no purchase needed" : `Estimated ${costLabel(e)}, within your ₹${p.budget} budget`);
+  if (!catHit) r.push(`Introduces ${CATEGORY_META[e.category].label}, a category outside your current selections`);
+  if (e.moods.includes(p.mood)) r.push(`Suits a ${p.mood} mood`);
+  r.push(`Within your ${DISTANCE_LABEL[p.distance]} range`);
+  if (ctx.completedCategories?.length && !ctx.completedCategories.includes(e.category)) r.push("A category you haven't completed in NOVA yet");
   return r.slice(0, 5);
 }
 
-export function recommend(p: Prefs, ctx: Context = {}) {
-  const { pool, relaxed } = filterExperiences(p, ctx);
-  const scored = pool.map((e) => scoreExperience(e, p, ctx));
-  const rank = (s: Scored) => (ctx.surprise ? s.novelty * 0.6 + s.final * 0.4 : s.final);
-  scored.sort((a, b) => rank(b) - rank(a) || a.exp.id.localeCompare(b.exp.id));
-  return { ranked: scored, relaxed, considered: EXPERIENCES.length, passed: pool.length };
+export function whyNew(e: Experience, p: Prefs) {
+  const bridge = bridgeTo(e, p.interests);
+  const chose = bridge ? CATEGORY_META[bridge].label : "your interests";
+  const adds = e.novelty_categories.join(" and ");
+  return bridge === e.category
+    ? `You chose ${chose}. NOVA keeps you there but adds ${adds} — a fresh angle on something you already enjoy.`
+    : `You chose ${chose}. NOVA carries it into ${CATEGORY_META[e.category].label.toLowerCase()} and adds ${adds}, giving you a new way to use an interest you already enjoy.`;
 }
 
+export function recommend(p: Prefs, ctx: Context = {}) {
+  const { eligible, pool } = filterExperiences(p, ctx);
+  const scored = pool.map((e) => scoreExperience(e, p, ctx));
+  scored.sort((a, b) => b.rank - a.rank || a.exp.id.localeCompare(b.exp.id));
+  const pick = scored[0];
+  // The "familiar" choice a conventional recommender would make: highest direct match.
+  const familiar = pick
+    ? [...scored].filter((s) => s !== pick).sort((a, b) => b.match - a.match || a.novelty - b.novelty)[0] ?? null
+    : null;
+  return { ranked: scored, familiar, scanned: EXPERIENCES.length, passed: eligible.length, rankedCount: scored.length };
+}
+
+/** Judge demo preset — runs through the real pipeline. */
 export const DEMO_PREFS: Prefs = {
   interests: ["photography", "technology"],
   mood: "curious",
   time: 90,
-  budget: 500,
+  budget: 300,
   energy: 2,
   social: "solo",
-  distance: "city",
+  distance: "nearby",
 };
 
-export const pct = (n: number) => Math.round(n * 100);
+export const pct = (n: number) => (Number.isFinite(n) ? Math.round(n * 100) : 0);
