@@ -40,7 +40,7 @@ function DnaPage() {
     const pref = s.prefs!.interests.filter((i) => cats.includes(i)).length * 12;
     const done = doneTags.filter((t) => cats.includes(t)).length * 8;
     const liked = cats.reduce((a, c) => a + (s.likedTags[c] ?? 0), 0) * 3;
-    return { trait, value: Math.min(99, 20 + pref + done + liked) };
+    return { trait, value: Math.max(0, Math.min(99, 20 + pref + done + liked)) };
   });
   const newCats = new Set(s.completed.map((c) => c.category).filter((c) => !s.prefs!.interests.includes(c)));
   const top = [...scores].sort((a, b) => b.value - a.value)[0] ?? { trait: "Curiosity", value: 0 };
@@ -54,7 +54,7 @@ function DnaPage() {
   return (
     <Page>
       <div className="animate-rise">
-        <p className="eyebrow">Discovery DNA</p>
+        <p className="eyebrow flex flex-wrap items-center gap-2">Discovery DNA {s.demo && <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">Demo profile</span>}</p>
         <h1 className="mt-3 text-4xl font-semibold sm:text-5xl">You're a <span className="italic text-gradient-nova">{top.trait.toLowerCase()}-led</span> explorer.</h1>
       </div>
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
@@ -68,6 +68,7 @@ function DnaPage() {
       </div>
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1fr]">
         <section className="glass rounded-3xl p-6 sm:p-8">
+          <p className="mb-5 text-xs text-muted-foreground">Built only from your selected interests and {s.feedback.length} feedback action{s.feedback.length === 1 ? "" : "s"} + {s.completed.length} completion{s.completed.length === 1 ? "" : "s"} recorded on this device. Adaptive preference learning — not machine learning.</p>
           <div className="space-y-5">
             {scores.map((sc, i) => <ScoreBar key={sc.trait} label={sc.trait} value={sc.value} tone={TONES[i] ?? "nova"} />)}
           </div>

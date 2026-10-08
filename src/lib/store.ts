@@ -12,10 +12,12 @@ export interface NovaState {
   likedTags: Partial<Record<Category, number>>;
   completed: { id: string; category: Category; at: string }[];
   feedback: { id: string; kind: Feedback; at: string }[];
+  noveltyPressure: number;
+  demo: boolean;
 }
 
-const KEY = "nova-state-v1";
-const EMPTY: NovaState = { prefs: null, saved: [], excluded: [], familiar: [], likedTags: {}, completed: [], feedback: [] };
+const KEY = "nova-state-v2";
+const EMPTY: NovaState = { prefs: null, saved: [], excluded: [], familiar: [], likedTags: {}, completed: [], feedback: [], noveltyPressure: 0, demo: false };
 
 let state: NovaState = EMPTY;
 let loaded = false;

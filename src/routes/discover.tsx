@@ -40,9 +40,9 @@ const STEPS: { key: keyof Prefs; q: string; opts: Opt<unknown>[] }[] = [
   ] },
   { key: "budget", q: "What's your budget?", opts: [
     { v: 0, label: "Free", sub: "₹0", icon: "Gift" },
-    { v: 500, label: "Light", sub: "Up to ₹500", icon: "Coins" },
-    { v: 1000, label: "Moderate", sub: "Up to ₹1,000", icon: "Wallet" },
-    { v: 5000, label: "Treat myself", sub: "Up to ₹5,000", icon: "Gem" },
+    { v: 300, label: "Light", sub: "₹1–₹300", icon: "Coins" },
+    { v: 700, label: "Moderate", sub: "₹301–₹700", icon: "Wallet" },
+    { v: 5000, label: "Treat myself", sub: "₹701+", icon: "Gem" },
   ] },
   { key: "energy", q: "Your energy level?", opts: [
     { v: 1, label: "Low", sub: "Sit-down friendly", icon: "BatteryLow" },
@@ -55,10 +55,9 @@ const STEPS: { key: keyof Prefs; q: string; opts: Opt<unknown>[] }[] = [
     { v: "group", label: "A group", icon: "UsersRound" },
   ] },
   { key: "distance", q: "How far will you go?", opts: [
-    { v: "home", label: "Stay home", icon: "House" },
-    { v: "nearby", label: "Walking distance", icon: "Footprints" },
-    { v: "city", label: "Across the city", icon: "Building2" },
-    { v: "far", label: "Day-trip far", icon: "Bus" },
+    { v: "nearby", label: "Walkable", sub: "Home or on foot", icon: "Footprints" },
+    { v: "city", label: "Micro-commute", sub: "A short ride away", icon: "Building2" },
+    { v: "far", label: "Day trip", sub: "Anywhere reachable", icon: "Bus" },
   ] },
 ];
 
@@ -76,7 +75,7 @@ function Discover() {
   const total = STEPS.length + 1;
 
   const finish = (a: Partial<Prefs>) => {
-    setState((s) => ({ ...s, prefs: { ...(a as Prefs), interests } }));
+    setState((s) => ({ ...s, prefs: { ...(a as Prefs), interests }, demo: false }));
     navigate({ to: "/result" });
   };
   const pick = (key: keyof Prefs, v: unknown) => {
