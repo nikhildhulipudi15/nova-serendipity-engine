@@ -6,8 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState, ExperienceArt, Page, ScoreBar, ScoreRing } from "@/components/nova/ui";
 import { CATEGORY_META } from "@/lib/experiences";
-import { DEMO_PREFS, pct, recommend, type Prefs } from "@/lib/engine";
-import { setState, today, useHydrated, useNova, type Feedback } from "@/lib/store";
+import { costLabel, DEMO_PREFS, pct, recommend, WEIGHTS, type Prefs } from "@/lib/engine";
+import { getExperience } from "@/lib/experiences";
+import { setState, useHydrated, useNova, type Feedback } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 type Search = { mode?: "demo" | "surprise" };
@@ -28,7 +29,7 @@ export const Route = createFileRoute("/result")({
   component: Result,
 });
 
-const PHASES = ["Filtering by time, budget & distance", "Scoring match, novelty & feasibility", "Finding your serendipity peak"];
+const PHASES = ["Filtering hard constraints", "Scoring match, novelty & feasibility", "Finding your serendipity peak"];
 const PLAN = ["Start", "Explore", "Challenge", "Discover", "Complete"];
 
 function Result() {
@@ -45,7 +46,7 @@ function Result() {
   // Demo/surprise without saved prefs: use the demo profile.
   useEffect(() => {
     if (!hydrated) return;
-    if (mode === "demo" || (mode === "surprise" && !s.prefs)) setState((st) => ({ ...st, prefs: DEMO_PREFS }));
+    if (mode === "demo" || (mode === "surprise" && !s.prefs)) setState((st) => ({ ...st, prefs: DEMO_PREFS, demo: true }));
     setSurprise(mode === "surprise");
     setSeen([]);
     setRunKey((k) => k + 1);
@@ -66,9 +67,11 @@ function Result() {
       familiar: s.familiar,
       completedCategories: s.completed.map((c) => c.category),
       likedTags: s.likedTags,
+      noveltyPressure: s.noveltyPressure,
+      seenNovelty: [...s.saved, ...s.completed.map((c) => c.id)].flatMap((id) => getExperience(id)?.novelty_categories ?? []),
       surprise,
     });
-  }, [prefs, s.excluded, s.familiar, s.completed, s.likedTags, seen, surprise]);
+  }, [prefs, s.excluded, s.familiar, s.completed, s.likedTags, s.noveltyPressure, s.saved, seen, surprise]);
 
   useEffect(() => setPlanStep(0), [result?.ranked[0]?.exp.id]);
 
@@ -85,11 +88,13 @@ function Result() {
 
   const top = result?.ranked[0];
   if (!top) {
+    const foodFree = prefs.interests.includes("food") && prefs.budget === 0 && !seen.length;
     return (
       <Page>
-        <EmptyState icon={<SearchX className="size-7" />} title="You've explored everything here"
-          body={seen.length ? "You've cycled through every match for these settings." : "Nothing fits these limits. Try more time or a bigger budget."}
+        <EmptyState icon={<SearchX className="size-7" />} title={foodFree ? "No suitable zero-cost food discovery found with these constraints." : seen.length ? "You've explored everything here" : "Nothing fits these constraints"}
+          body={seen.length ? "You've cycled through every eligible match for these settings." : `NOVA scanned ${result?.scanned ?? 0} catalog experiences; ${result?.passed ?? 0} passed your constraints and none bridged to your interests. NOVA won't recommend something that breaks your limits.`}
           action={<div className="flex flex-wrap justify-center gap-3">
+            {foodFree && <button className="btn-nova" onClick={() => setState((st) => ({ ...st, prefs: { ...prefs, interests: ["food"], time: 240, energy: 3, distance: "far" } }))}>Try a zero-cost food-related discovery instead</button>}
             {seen.length > 0 && <button className="btn-nova" onClick={() => { setSeen([]); setRunKey((k) => k + 1); }}><RefreshCcw className="size-4" /> Start over</button>}
             <Link to="/discover" className="btn-ghost">Adjust preferences</Link>
           </div>} />
@@ -105,9 +110,11 @@ function Result() {
   const feedback = (kind: Feedback) => {
     setState((st) => {
       const likedTags = { ...st.likedTags };
-      if (kind === "loved" || kind === "more_like_this") e.tags.forEach((t) => (likedTags[t] = (likedTags[t] ?? 0) + (kind === "loved" ? 2 : 1)));
+      const delta = { loved: 2, more_like_this: 1, not_for_me: -2, too_familiar: 0, surprise_more: 0 }[kind];
+      if (delta) e.tags.forEach((t) => (likedTags[t] = (likedTags[t] ?? 0) + delta));
       return {
         ...st, likedTags,
+        noveltyPressure: kind === "too_familiar" || kind === "surprise_more" ? Math.min(3, st.noveltyPressure + 1) : st.noveltyPressure,
         excluded: kind === "not_for_me" ? [...st.excluded, e.id] : st.excluded,
         familiar: (kind === "too_familiar" || kind === "surprise_more") && !st.familiar.includes(e.category) ? [...st.familiar, e.category] : st.familiar,
         saved: kind === "loved" && !st.saved.includes(e.id) ? [...st.saved, e.id] : st.saved,
@@ -115,11 +122,11 @@ function Result() {
       };
     });
     if (kind === "surprise_more") setSurprise(true);
-    toast({
-      loved: "Saved — NOVA will lean into this.", not_for_me: "Got it. We won't show this again.",
-      too_familiar: `Pushing further from ${CATEGORY_META[e.category].label}.`, more_like_this: "Tuning toward similar picks.",
-      surprise_more: "Novelty dialled up. Hold on.",
-    }[kind]);
+    toast("Discovery DNA updated", { description: {
+      loved: "Saved, and NOVA will lean toward these traits.", not_for_me: "These traits now rank lower; this pick is hidden.",
+      too_familiar: `Novelty preference raised; moving beyond ${CATEGORY_META[e.category].label}.`, more_like_this: "Similar traits boosted — without repeating this pick.",
+      surprise_more: "Novelty pressure up, constraints still respected.",
+    }[kind] });
     next();
   };
 
@@ -137,19 +144,21 @@ function Result() {
     <Page>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3 animate-rise">
         <div className="flex flex-wrap items-center gap-2">
-          {mode === "demo" && <span className="rounded-full bg-primary/15 px-3 py-1 text-xs font-bold text-primary">DEMO PROFILE · photography + tech, 90 min</span>}
-          {surprise && <span className="rounded-full bg-ember/15 px-3 py-1 text-xs font-bold text-ember">SURPRISE MODE · novelty weighted up</span>}
-          <span className="text-xs text-muted-foreground">{result!.passed} of {result!.considered} experiences passed your filters{result!.relaxed && ` (relaxed ${result!.relaxed})`}</span>
+          {s.demo && <span className="rounded-full bg-primary/15 px-3 py-1 text-xs font-bold text-primary">DEMO PROFILE · photography + tech · 90 min · ≤₹300 · walkable</span>}
+          {surprise && <span className="rounded-full bg-ember/15 px-3 py-1 text-xs font-bold text-ember">SURPRISE MODE · novelty preferred, constraints kept</span>}
+          {s.noveltyPressure > 0 && <span className="rounded-full bg-tide/15 px-3 py-1 text-xs font-bold text-tide">NOVELTY PREFERENCE +{s.noveltyPressure}</span>}
         </div>
         <Link to="/discover" className="text-sm font-semibold text-muted-foreground hover:text-foreground">Edit preferences</Link>
       </div>
+
+      <Funnel steps={[["Experiences scanned", result!.scanned], ["Passed your constraints", result!.passed], ["Ranked by NOVA", result!.rankedCount], ["Selected discovery", 1]]} />
 
       {/* Hero result */}
       <section key={e.id} className="glass overflow-hidden rounded-[2rem] animate-rise lg:grid lg:grid-cols-[1.1fr_1fr]">
         <div className="relative">
           <ExperienceArt exp={e} className="h-64 sm:h-80 lg:h-full lg:min-h-[480px]" iconSize={96} />
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-background/90 to-transparent p-6 pt-20 sm:p-8">
-            <span className="eyebrow !text-foreground/80">{CATEGORY_META[e.category].label} · {e.duration} min · {e.budget ? `₹${e.budget}` : "Free"}</span>
+            <span className="eyebrow !text-foreground/80">{CATEGORY_META[e.category].label} · {e.duration} min · {costLabel(e)}</span>
             <h1 className="mt-2 text-3xl font-semibold leading-tight sm:text-4xl">{e.title}</h1>
           </div>
         </div>
@@ -168,6 +177,10 @@ function Result() {
           <p className="mt-6 text-muted-foreground">{e.description}</p>
           <div className="mt-5 flex flex-wrap gap-2">
             {e.novelty_categories.map((n) => <span key={n} className="rounded-full border border-border px-3 py-1 text-xs font-semibold">+ {n}</span>)}
+          </div>
+          <div className="mt-5 rounded-2xl border border-primary/25 bg-primary/5 p-4">
+            <p className="eyebrow !text-primary">Why this is new</p>
+            <p className="mt-1.5 text-sm">{top.whyNew}</p>
           </div>
           <div className="mt-auto flex flex-wrap gap-3 pt-6">
             <button onClick={toggleSave} className="btn-ghost">{saved ? <BookmarkCheck className="size-4 text-primary" /> : <Bookmark className="size-4" />}{saved ? "Saved" : "Save"}</button>
@@ -236,6 +249,41 @@ function Result() {
         </section>
       </div>
 
+      <div className="mt-6 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+        <section className="glass rounded-3xl p-6 sm:p-8">
+          <p className="eyebrow">Familiar vs NOVA</p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl bg-secondary/60 p-4">
+              <p className="eyebrow">Familiar choice</p>
+              {result!.familiar ? (
+                <>
+                  <p className="mt-2 font-bold">{result!.familiar.exp.title}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">{pct(result!.familiar.match)}% match · {pct(result!.familiar.novelty)}% new</p>
+                </>
+              ) : <p className="mt-2 text-sm text-muted-foreground">Highest direct match, strong familiarity</p>}
+              <p className="mt-2 text-xs text-muted-foreground">What a conventional recommender would favour.</p>
+            </div>
+            <div className="rounded-2xl bg-primary/10 p-4 ring-1 ring-primary/40">
+              <p className="eyebrow !text-primary">NOVA choice</p>
+              <p className="mt-2 font-bold">{e.title}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{pct(top.match)}% match · {pct(top.novelty)}% new</p>
+              <p className="mt-2 text-xs text-muted-foreground">Balances fit with a new exploration path.</p>
+            </div>
+          </div>
+          <p className="mt-4 text-sm text-muted-foreground">NOVA does not maximise familiarity. It balances fit with meaningful novelty.</p>
+        </section>
+        <section className="glass rounded-3xl p-6 sm:p-8">
+          <p className="eyebrow">How NOVA scores</p>
+          <ul className="mt-4 space-y-1.5 text-sm">
+            {([["Preference match", WEIGHTS.match], ["Novelty", WEIGHTS.novelty], ["Feasibility", WEIGHTS.feasibility], ["Mood fit", WEIGHTS.mood], ["Exploration value", WEIGHTS.exploration]] as const).map(([k, w]) => (
+              <li key={k} className="flex justify-between"><span className="text-muted-foreground">{k}</span><span className="font-bold">{Math.round(w * 100)}%</span></li>
+            ))}
+          </ul>
+          <p className="mt-4 text-xs text-muted-foreground">Hard constraints are filtered first. Eligible experiences are then ranked using NOVA's weighted serendipity score.</p>
+          <p className="mt-2 text-xs text-muted-foreground/70">Recommendation from NOVA's curated discovery catalog — not live local availability.</p>
+        </section>
+      </div>
+
       {/* Feedback */}
       <section className="glass mt-6 rounded-3xl p-6 sm:p-8">
         <p className="eyebrow">How does this feel?</p>
@@ -269,6 +317,19 @@ function Result() {
         </section>
       )}
     </Page>
+  );
+}
+
+function Funnel({ steps }: { steps: [string, number][] }) {
+  return (
+    <ol className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4 animate-rise">
+      {steps.map(([label, n], i) => (
+        <li key={label} className={cn("glass rounded-2xl px-4 py-3", i === 3 && "!border-primary/50")}>
+          <span className={cn("font-display text-2xl font-semibold", i === 3 && "text-gradient-nova")}>{n}</span>
+          <span className="block text-xs text-muted-foreground">{label}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
